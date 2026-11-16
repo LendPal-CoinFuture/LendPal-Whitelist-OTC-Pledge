@@ -66,8 +66,9 @@ contract AccessRegistryHandler is Test {
 
     function addToWhitelistBatch(uint256 callerSeed, uint256 userSeed) external {
         address caller = _caller(callerSeed);
-        address first = _users[userSeed % _users.length];
-        address second = _users[(userSeed + 1) % _users.length];
+        uint256 firstIndex = userSeed % _users.length;
+        address first = _users[firstIndex];
+        address second = _users[(firstIndex + 1) % _users.length];
         if (first == second) return;
         address[] memory accounts = new address[](2);
         string[] memory notes = new string[](2);
@@ -83,8 +84,9 @@ contract AccessRegistryHandler is Test {
 
     function removeFromWhitelistBatch(uint256 callerSeed, uint256 userSeed) external {
         address caller = _caller(callerSeed);
-        address first = _users[userSeed % _users.length];
-        address second = _users[(userSeed + 3) % _users.length];
+        uint256 firstIndex = userSeed % _users.length;
+        address first = _users[firstIndex];
+        address second = _users[(firstIndex + 3) % _users.length];
         if (first == second) return;
         address[] memory accounts = new address[](2);
         accounts[0] = first;
@@ -135,10 +137,11 @@ contract AccessRegistryHandler is Test {
     }
 
     function _caller(uint256 seed) internal view returns (address) {
-        uint256 bucket = seed % 10;
+        uint256 bucket = seed % 12;
         if (bucket < 5) return registry.owner();
         if (bucket < 8) return _candidates[seed % _candidates.length];
-        return outsider;
+        if (bucket < 10 || tracked.length == 0) return outsider;
+        return tracked[seed % tracked.length];
     }
 
     function _nextOwner(uint256 seed) internal view returns (address) {
@@ -213,6 +216,7 @@ contract AccessRegistryInvariantTest is Test {
             }
             ghostListed++;
             assertTrue(registry.isWhitelisted(user));
+            assertTrue(_contains(_personal(by), user));
             assertFalse(_contains(_personal(owner), user) && by != owner);
             for (uint256 j; j < admins.length; j++) {
                 bool inAdminList = _contains(_personal(admins[j]), user);

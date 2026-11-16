@@ -6,9 +6,12 @@ import {Ownable2StepUpgradeable} from "@openzeppelin/contracts-upgradeable/acces
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
 /// @title AccessRegistry
-/// @notice 超级管理员管普通管理员。普通管理员只管自己加入的白名单。
+/// @notice 超级管理员管普通管理员。
+///         超级管理员、普通管理员，以及已经在白名单里的人，都可以邀请新地址。
+///         邀请人记为被邀请人的担保人。
 ///         普通管理员不能添加、删除、修改任何管理员。
-///         普通管理员不能删除或修改其他普通管理员加入的白名单。
+///         白名单用户不能移出任何人。
+///         普通管理员只能移出自己加入的用户。超级管理员可以移出任何一条。
 ///         批量加入和批量移出与单笔使用同一套规则，一次最多 50 条。
 ///         合约里没有修改白名单记录和管理员身份的函数。
 contract AccessRegistry is Initializable, Ownable2StepUpgradeable, UUPSUpgradeable {
@@ -71,6 +74,8 @@ contract AccessRegistry is Initializable, Ownable2StepUpgradeable, UUPSUpgradeab
     error UserAlreadyWhitelisted();
     error NotListed();
     error NotOperator();
+    error NotInviter();
+    error SelfInvite();
     error NotEntryOwner();
     error OwnerCannotBeAdmin();
     error AdminCapacityReached();
@@ -204,16 +209,19 @@ contract AccessRegistry is Initializable, Ownable2StepUpgradeable, UUPSUpgradeab
     }
 
     /// @notice 把用户加入白名单，并记下当前调用人和备注。
-    ///         这个地址已经被人加入时会失败，不能改记到自己名下。
+    ///         超级管理员、普通管理员、已经在白名单里的人都可以调用。
+    ///         调用人就是这个地址的担保人。
+    ///         不能邀请自己。这个地址已经被人加入时会失败，不能改记到自己名下。
     ///         备注可以是空字符串，最长 64 字节。
-    function addToWhitelist(address account, string calldata note) external onlyOperator {
+    function addToWhitelist(address account, string calldata note) external onlyInviter {
         _addToWhitelist(account, note);
     }
 
-    /// @notice 一次加入多条白名单。超级管理员和普通管理员都能调用。
+    /// @notice 一次加入多条白名单。
+    ///         超级管理员、普通管理员、已经在白名单里的人都可以调用。
     ///         规则和单笔加入相同。地址和备注一一对应，一次最多 50 条。
     ///         有一条不合法时，整笔回滚，前面的地址也不会留下。
-    function addToWhitelistBatch(address[] calldata accounts, string[] calldata notes) external onlyOperator {
+    function addToWhitelistBatch(address[] calldata accounts, string[] calldata notes) external onlyInviter {
         uint256 length = accounts.length;
         if (length == 0) revert EmptyBatch();
         if (length != notes.length) revert BatchLengthMismatch();
@@ -244,9 +252,10 @@ contract AccessRegistry is Initializable, Ownable2StepUpgradeable, UUPSUpgradeab
         }
     }
 
-    /// @dev 单笔和批量共用。调用人已经过 onlyOperator。
+    /// @dev 单笔和批量共用。调用人已经过 onlyInviter。
     function _addToWhitelist(address account, string calldata note) private {
         if (account == address(0)) revert ZeroAddress();
+        if (account == msg.sender) revert SelfInvite();
         if (bytes(note).length > MAX_NOTE_LENGTH) revert NoteTooLong();
 
         Layout storage $ = _layout();
@@ -312,11 +321,7 @@ contract AccessRegistry is Initializable, Ownable2StepUpgradeable, UUPSUpgradeab
     /// @notice 产品进门时调用。只回答在或不在，不返回是谁加入的。
     ///         超级管理员、普通管理员视为已准入（与白名单用户同等）。
     function isWhitelisted(address account) external view returns (bool) {
-        if (account == address(0)) return false;
-        if (account == owner()) return true;
-        Layout storage $ = _layout();
-        if ($.adminIndexPlusOne[account] != 0) return true;
-        return $.whitelistAddedBy[account] != address(0);
+        return _admitted(account);
     }
 
     /// @notice 存储版本。升级后应仍为 1。
@@ -341,12 +346,27 @@ contract AccessRegistry is Initializable, Ownable2StepUpgradeable, UUPSUpgradeab
     }
 
     /// @dev 超级管理员或普通管理员可以通过。
-    ///      只挂在白名单函数上。删除管理员、升级、交接不使用它。
+    ///      只挂在移出白名单上。邀请、删除管理员、升级、交接不使用它。
     modifier onlyOperator() {
         if (msg.sender != owner() && _layout().adminIndexPlusOne[msg.sender] == 0) {
             revert NotOperator();
         }
         _;
+    }
+
+    /// @dev 超级管理员、普通管理员，或已在白名单中的地址可以通过。
+    ///      只挂在邀请上。移出不使用它，白名单用户因此不能删除邀请记录。
+    modifier onlyInviter() {
+        if (!_admitted(msg.sender)) revert NotInviter();
+        _;
+    }
+
+    function _admitted(address account) private view returns (bool) {
+        if (account == address(0)) return false;
+        if (account == owner()) return true;
+        Layout storage $ = _layout();
+        if ($.adminIndexPlusOne[account] != 0) return true;
+        return $.whitelistAddedBy[account] != address(0);
     }
 
     /// @dev 交接生效前调用。只改原超级管理员加入的那些用户。

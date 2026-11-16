@@ -229,7 +229,7 @@ contract AccessRegistryTest is Test {
         assertEq(hackerPage.length, 0);
         _expectOwnerOnly(hacker);
         registry.setAdminLimit(1);
-        vm.expectRevert(AccessRegistry.NotOperator.selector);
+        vm.expectRevert(AccessRegistry.NotInviter.selector);
         registry.addToWhitelist(hacker, "");
         vm.expectRevert(AccessRegistry.NotOperator.selector);
         registry.removeFromWhitelist(userA);
@@ -295,7 +295,7 @@ contract AccessRegistryTest is Test {
         registry.removeAdmin(adminA);
 
         vm.startPrank(adminA);
-        vm.expectRevert(AccessRegistry.NotOperator.selector);
+        vm.expectRevert(AccessRegistry.NotInviter.selector);
         registry.addToWhitelist(userB, "");
         vm.expectRevert(AccessRegistry.NotOperator.selector);
         registry.removeFromWhitelist(userA);
@@ -437,7 +437,7 @@ contract AccessRegistryTest is Test {
         accounts[1] = userA;
 
         vm.prank(adminB);
-        vm.expectRevert(AccessRegistry.NotOperator.selector);
+        vm.expectRevert(AccessRegistry.NotInviter.selector);
         registry.addToWhitelistBatch(accounts, notes);
 
         vm.prank(adminA);
@@ -534,6 +534,50 @@ contract AccessRegistryTest is Test {
         vm.prank(makeAddr("outsider"));
         vm.expectRevert(AccessRegistry.NotOperator.selector);
         registry.removeFromWhitelistBatch(own);
+    }
+
+    function test_whitelistUserCanInviteAndCannotRemove() public {
+        _addUser(owner, userA);
+
+        vm.prank(userA);
+        vm.expectRevert(AccessRegistry.SelfInvite.selector);
+        registry.addToWhitelist(userA, "");
+
+        vm.prank(userA);
+        registry.addToWhitelist(userB, unicode"朋友");
+        assertTrue(registry.isWhitelisted(userB));
+        assertEq(registry.whitelistNoteOf(userB), unicode"朋友");
+        bytes32 layout = 0xd305b90518e6fe535c399942b2c8ed71039b6599030b4fa85d6ed3cf0b93cb00;
+        bytes32 slot = keccak256(abi.encode(userB, bytes32(uint256(layout) + 2)));
+        assertEq(address(uint160(uint256(vm.load(address(registry), slot)))), userA);
+
+        vm.prank(userA);
+        address[] memory mine = registry.getMyWhitelistPage(0, 50);
+        assertEq(mine.length, 1);
+        assertEq(mine[0], userB);
+
+        address userC = makeAddr("userC");
+        vm.prank(userB);
+        registry.addToWhitelist(userC, "");
+        assertTrue(registry.isWhitelisted(userC));
+        vm.prank(userB);
+        address[] memory next = registry.getMyWhitelistPage(0, 50);
+        assertEq(next.length, 1);
+        assertEq(next[0], userC);
+
+        vm.prank(userA);
+        vm.expectRevert(AccessRegistry.NotOperator.selector);
+        registry.removeFromWhitelist(userB);
+        vm.prank(userB);
+        vm.expectRevert(AccessRegistry.NotOperator.selector);
+        registry.removeFromWhitelist(userC);
+        assertTrue(registry.isWhitelisted(userB));
+        assertTrue(registry.isWhitelisted(userC));
+
+        vm.prank(owner);
+        registry.removeFromWhitelist(userB);
+        assertFalse(registry.isWhitelisted(userB));
+        assertTrue(registry.isWhitelisted(userC));
     }
 
     function test_batchAcceptsFifty() public {

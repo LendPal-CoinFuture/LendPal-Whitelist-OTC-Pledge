@@ -27,7 +27,7 @@ contract AccessRegistryFuzzTest is Test {
         vm.assume(user != address(0) && user != owner && user != adminA);
 
         vm.prank(hacker);
-        vm.expectRevert(AccessRegistry.NotOperator.selector);
+        vm.expectRevert(AccessRegistry.NotInviter.selector);
         registry.addToWhitelist(user, "");
 
         assertFalse(registry.isWhitelisted(user));
